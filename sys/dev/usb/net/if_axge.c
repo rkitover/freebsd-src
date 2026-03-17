@@ -507,10 +507,17 @@ axge_ifmedia_upd(if_t ifp)
 	mii = GET_MII(sc);
 	AXGE_LOCK_ASSERT(sc, MA_OWNED);
 
+	AXGE_UNLOCK(sc);
+	AXGE_MII_LOCK(sc);
+	AXGE_LOCK(sc);
+
 	LIST_FOREACH(miisc, &mii->mii_phys, mii_list)
 	    PHY_RESET(miisc);
 	error = mii_mediachg(mii);
 
+	AXGE_UNLOCK(sc);
+	AXGE_MII_UNLOCK(sc);
+	AXGE_LOCK(sc);
 	return (error);
 }
 
@@ -525,11 +532,13 @@ axge_ifmedia_sts(if_t ifp, struct ifmediareq *ifmr)
 
 	sc = if_getsoftc(ifp);
 	mii = GET_MII(sc);
+	AXGE_MII_LOCK(sc);
 	AXGE_LOCK(sc);
 	mii_pollstat(mii);
 	ifmr->ifm_active = mii->mii_media_active;
 	ifmr->ifm_status = mii->mii_media_status;
 	AXGE_UNLOCK(sc);
+	AXGE_MII_UNLOCK(sc);
 }
 
 /*
@@ -570,6 +579,7 @@ axge_attach(device_t dev)
 
 	device_set_usb_desc(dev);
 	mtx_init(&sc->sc_mtx, device_get_nameunit(dev), NULL, MTX_DEF);
+	sx_init(&sc->sc_mii_lock, "axgemii");
 
 	sc->sc_flags = USB_GET_DRIVER_INFO(uaa);
 
@@ -631,6 +641,7 @@ axge_detach(device_t dev)
 	}
 	usbd_transfer_unsetup(sc->sc_xfer, AXGE_N_TRANSFER);
 	uether_ifdetach(ue);
+	sx_destroy(&sc->sc_mii_lock);
 	mtx_destroy(&sc->sc_mtx);
 
 	return (0);
@@ -768,7 +779,18 @@ axge_tick(struct usb_ether *ue)
 	mii = GET_MII(sc);
 	AXGE_LOCK_ASSERT(sc, MA_OWNED);
 
+	AXGE_UNLOCK(sc);
+	if (!AXGE_MII_TRYLOCK(sc)) {
+		AXGE_LOCK(sc);
+		return;
+	}
+	AXGE_LOCK(sc);
+
 	mii_tick(mii);
+
+	AXGE_UNLOCK(sc);
+	AXGE_MII_UNLOCK(sc);
+	AXGE_LOCK(sc);
 }
 
 static u_int
