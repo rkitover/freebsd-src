@@ -454,9 +454,17 @@ axe_ifmedia_upd(if_t ifp)
 
 	AXE_LOCK_ASSERT(sc, MA_OWNED);
 
+	AXE_UNLOCK(sc);
+	AXE_MII_LOCK(sc);
+	AXE_LOCK(sc);
+
 	LIST_FOREACH(miisc, &mii->mii_phys, mii_list)
 		PHY_RESET(miisc);
 	error = mii_mediachg(mii);
+
+	AXE_UNLOCK(sc);
+	AXE_MII_UNLOCK(sc);
+	AXE_LOCK(sc);
 	return (error);
 }
 
@@ -469,11 +477,13 @@ axe_ifmedia_sts(if_t ifp, struct ifmediareq *ifmr)
 	struct axe_softc *sc = if_getsoftc(ifp);
 	struct mii_data *mii = GET_MII(sc);
 
+	AXE_MII_LOCK(sc);
 	AXE_LOCK(sc);
 	mii_pollstat(mii);
 	ifmr->ifm_active = mii->mii_media_active;
 	ifmr->ifm_status = mii->mii_media_status;
 	AXE_UNLOCK(sc);
+	AXE_MII_UNLOCK(sc);
 }
 
 static u_int
@@ -940,6 +950,7 @@ axe_attach(device_t dev)
 	device_set_usb_desc(dev);
 
 	mtx_init(&sc->sc_mtx, device_get_nameunit(dev), NULL, MTX_DEF);
+	sx_init(&sc->sc_mii_lock, "axemii");
 
 	iface_index = AXE_IFACE_IDX;
 	error = usbd_transfer_setup(uaa->device, &iface_index, sc->sc_xfer,
@@ -975,6 +986,7 @@ axe_detach(device_t dev)
 
 	usbd_transfer_unsetup(sc->sc_xfer, AXE_N_TRANSFER);
 	uether_ifdetach(ue);
+	sx_destroy(&sc->sc_mii_lock);
 	mtx_destroy(&sc->sc_mtx);
 
 	return (0);
@@ -1270,12 +1282,23 @@ axe_tick(struct usb_ether *ue)
 
 	AXE_LOCK_ASSERT(sc, MA_OWNED);
 
+	AXE_UNLOCK(sc);
+	if (!AXE_MII_TRYLOCK(sc)) {
+		AXE_LOCK(sc);
+		return;
+	}
+	AXE_LOCK(sc);
+
 	mii_tick(mii);
 	if ((sc->sc_flags & AXE_FLAG_LINK) == 0) {
 		axe_miibus_statchg(ue->ue_dev);
 		if ((sc->sc_flags & AXE_FLAG_LINK) != 0)
 			axe_start(ue);
 	}
+
+	AXE_UNLOCK(sc);
+	AXE_MII_UNLOCK(sc);
+	AXE_LOCK(sc);
 }
 
 static void

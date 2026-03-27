@@ -333,6 +333,7 @@ enum {
 struct axe_softc {
 	struct usb_ether	sc_ue;
 	struct mtx		sc_mtx;
+	struct sx		sc_mii_lock;
 	struct usb_xfer	*sc_xfer[AXE_N_TRANSFER];
 	int			sc_phyno;
 
@@ -361,3 +362,6 @@ struct axe_softc {
 #define	AXE_LOCK(_sc)		mtx_lock(&(_sc)->sc_mtx)
 #define	AXE_UNLOCK(_sc)		mtx_unlock(&(_sc)->sc_mtx)
 #define	AXE_LOCK_ASSERT(_sc, t)	mtx_assert(&(_sc)->sc_mtx, t)
+#define	AXE_MII_LOCK(_sc)	sx_xlock(&(_sc)->sc_mii_lock)
+#define	AXE_MII_UNLOCK(_sc)	sx_xunlock(&(_sc)->sc_mii_lock)
+#define	AXE_MII_TRYLOCK(_sc)	sx_try_xlock(&(_sc)->sc_mii_lock)
