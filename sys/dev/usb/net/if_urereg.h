@@ -581,6 +581,7 @@ struct ure_softc {
 	struct usb_ether	sc_ue;
 	struct ifmedia		sc_ifmedia;
 	struct mtx		sc_mtx;
+	struct sx		sc_mii_lock;
 	struct usb_xfer		*sc_rx_xfer[URE_MAX_RX];
 	struct usb_xfer		*sc_tx_xfer[URE_MAX_TX];
 
@@ -616,5 +617,8 @@ struct ure_softc {
 #define	URE_LOCK(_sc)		mtx_lock(&(_sc)->sc_mtx)
 #define	URE_UNLOCK(_sc)		mtx_unlock(&(_sc)->sc_mtx)
 #define	URE_LOCK_ASSERT(_sc, t)	mtx_assert(&(_sc)->sc_mtx, t)
+#define	URE_MII_LOCK(_sc)	sx_xlock(&(_sc)->sc_mii_lock)
+#define	URE_MII_UNLOCK(_sc)	sx_xunlock(&(_sc)->sc_mii_lock)
+#define	URE_MII_TRYLOCK(_sc)	sx_try_xlock(&(_sc)->sc_mii_lock)
 
 #endif		/* _IF_UREREG_H_ */
