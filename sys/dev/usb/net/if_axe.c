@@ -185,6 +185,8 @@ static const STRUCT_USB_HOST_ID axe_devs[] = {
 static device_probe_t axe_probe;
 static device_attach_t axe_attach;
 static device_detach_t axe_detach;
+static device_suspend_t axe_suspend;
+static device_resume_t axe_resume;
 
 static usb_callback_t axe_bulk_read_callback;
 static usb_callback_t axe_bulk_write_callback;
@@ -256,6 +258,8 @@ static device_method_t axe_methods[] = {
 	DEVMETHOD(device_probe, axe_probe),
 	DEVMETHOD(device_attach, axe_attach),
 	DEVMETHOD(device_detach, axe_detach),
+	DEVMETHOD(device_suspend, axe_suspend),
+	DEVMETHOD(device_resume, axe_resume),
 
 	/* MII interface */
 	DEVMETHOD(miibus_readreg, axe_miibus_readreg),
@@ -796,20 +800,19 @@ axe_ax88772b_init(struct axe_softc *sc)
 static void
 axe_reset(struct axe_softc *sc)
 {
-	struct usb_config_descriptor *cd;
-	usb_error_t err;
 
-	cd = usbd_get_config_descriptor(sc->sc_ue.ue_udev);
+	AXE_LOCK_ASSERT(sc, MA_OWNED);
 
-	err = usbd_req_set_config(sc->sc_ue.ue_udev, &sc->sc_mtx,
-	    cd->bConfigurationValue);
-	if (err)
-		DPRINTF("reset failed (ignored)\n");
-
-	/* Wait a little while for the chip to get its brains in order. */
-	uether_pause(&sc->sc_ue, hz / 100);
-
-	/* Reinitialize controller to achieve full reset. */
+	/*
+	 * Reinitialize the chip using its own software reset register
+	 * sequence.  This is safe across init, suspend/resume, and error
+	 * recovery -- unlike usbd_req_set_config() which can cause a USB
+	 * re-enumeration and race with other bus activity.
+	 *
+	 * For AX88172, the chip has no SW reset register, so we fall
+	 * through without touching hardware; axe_init() reprograms
+	 * everything needed.
+	 */
 	if (sc->sc_flags & AXE_FLAG_178)
 		axe_ax88178_init(sc);
 	else if (sc->sc_flags & AXE_FLAG_772)
@@ -988,6 +991,55 @@ axe_detach(device_t dev)
 	uether_ifdetach(ue);
 	sx_destroy(&sc->sc_mii_lock);
 	mtx_destroy(&sc->sc_mtx);
+
+	return (0);
+}
+
+static int
+axe_suspend(device_t dev)
+{
+	struct axe_softc *sc = device_get_softc(dev);
+	struct usb_ether *ue = &sc->sc_ue;
+
+	AXE_LOCK(sc);
+
+	/*
+	 * Stop RX/TX and mark the interface as not running so that
+	 * axe_init() will perform a full re-init on resume.  The
+	 * chip-level MAC disable (clearing AXE_178_MEDIA_RX_EN via
+	 * AXE_CMD_WRITE_MEDIA) ensures the controller stops DMA
+	 * before the USB bus is suspended.
+	 */
+	if (AXE_IS_178_FAMILY(sc)) {
+		uint16_t medium;
+
+		axe_cmd(sc, AXE_178_CMD_READ_MEDIA, 0, 0, &medium);
+		medium = le16toh(medium);
+		medium &= ~AXE_178_MEDIA_RX_EN;
+		axe_cmd(sc, AXE_CMD_WRITE_MEDIA, 0, medium, NULL);
+	}
+	axe_cmd(sc, AXE_CMD_RXCTL_WRITE, 0, 0, NULL);
+
+	axe_stop(ue);
+
+	AXE_UNLOCK(sc);
+
+	return (0);
+}
+
+static int
+axe_resume(device_t dev)
+{
+	struct axe_softc *sc = device_get_softc(dev);
+	struct usb_ether *ue = &sc->sc_ue;
+	if_t ifp = uether_getifp(ue);
+
+	AXE_LOCK(sc);
+
+	if (ifp != NULL && if_getflags(ifp) & IFF_UP)
+		axe_init(ue);
+
+	AXE_UNLOCK(sc);
 
 	return (0);
 }
