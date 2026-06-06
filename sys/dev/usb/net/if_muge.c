@@ -167,6 +167,7 @@ enum {
 struct muge_softc {
 	struct usb_ether	sc_ue;
 	struct mtx		sc_mtx;
+	struct sx		sc_mii_lock;
 	struct usb_xfer		*sc_xfer[MUGE_N_TRANSFER];
 	int			sc_phyno;
 	uint32_t		sc_leds;
@@ -191,6 +192,9 @@ struct muge_softc {
 #define MUGE_LOCK(_sc)			mtx_lock(&(_sc)->sc_mtx)
 #define MUGE_UNLOCK(_sc)		mtx_unlock(&(_sc)->sc_mtx)
 #define MUGE_LOCK_ASSERT(_sc, t)	mtx_assert(&(_sc)->sc_mtx, t)
+#define	MUGE_MII_LOCK(_sc)		sx_xlock(&(_sc)->sc_mii_lock)
+#define	MUGE_MII_UNLOCK(_sc)		sx_xunlock(&(_sc)->sc_mii_lock)
+#define	MUGE_MII_TRYLOCK(_sc)		sx_try_xlock(&(_sc)->sc_mii_lock)
 
 static device_probe_t muge_probe;
 static device_attach_t muge_attach;
@@ -2006,9 +2010,17 @@ muge_ifmedia_upd(if_t ifp)
 
 	MUGE_LOCK_ASSERT(sc, MA_OWNED);
 
+	MUGE_UNLOCK(sc);
+	MUGE_MII_LOCK(sc);
+	MUGE_LOCK(sc);
+
 	LIST_FOREACH(miisc, &mii->mii_phys, mii_list)
 		PHY_RESET(miisc);
 	err = mii_mediachg(mii);
+
+	MUGE_UNLOCK(sc);
+	MUGE_MII_UNLOCK(sc);
+	MUGE_LOCK(sc);
 	return (err);
 }
 
@@ -2098,12 +2110,23 @@ muge_tick(struct usb_ether *ue)
 
 	MUGE_LOCK_ASSERT(sc, MA_OWNED);
 
+	MUGE_UNLOCK(sc);
+	if (!MUGE_MII_TRYLOCK(sc)) {
+		MUGE_LOCK(sc);
+		return;
+	}
+	MUGE_LOCK(sc);
+
 	mii_tick(mii);
 	if ((sc->sc_flags & MUGE_FLAG_LINK) == 0) {
 		lan78xx_miibus_statchg(ue->ue_dev);
 		if ((sc->sc_flags & MUGE_FLAG_LINK) != 0)
 			muge_start(ue);
 	}
+
+	MUGE_UNLOCK(sc);
+	MUGE_MII_UNLOCK(sc);
+	MUGE_LOCK(sc);
 }
 
 /**
@@ -2122,11 +2145,13 @@ muge_ifmedia_sts(if_t ifp, struct ifmediareq *ifmr)
 	struct muge_softc *sc = if_getsoftc(ifp);
 	struct mii_data *mii = uether_getmii(&sc->sc_ue);
 
+	MUGE_MII_LOCK(sc);
 	MUGE_LOCK(sc);
 	mii_pollstat(mii);
 	ifmr->ifm_active = mii->mii_media_active;
 	ifmr->ifm_status = mii->mii_media_status;
 	MUGE_UNLOCK(sc);
+	MUGE_MII_UNLOCK(sc);
 }
 
 /**
@@ -2175,6 +2200,7 @@ muge_attach(device_t dev)
 	device_set_usb_desc(dev);
 
 	mtx_init(&sc->sc_mtx, device_get_nameunit(dev), NULL, MTX_DEF);
+	sx_init(&sc->sc_mii_lock, "mugemii");
 
 	/* Setup the endpoints for the Microchip LAN78xx device. */
 	iface_index = MUGE_IFACE_IDX;
@@ -2229,6 +2255,7 @@ muge_detach(device_t dev)
 
 	usbd_transfer_unsetup(sc->sc_xfer, MUGE_N_TRANSFER);
 	uether_ifdetach(ue);
+	sx_destroy(&sc->sc_mii_lock);
 	mtx_destroy(&sc->sc_mtx);
 
 	return (0);
