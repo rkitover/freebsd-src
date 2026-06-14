@@ -204,6 +204,7 @@ struct aue_rxpkt {
 struct aue_softc {
 	struct usb_ether	sc_ue;
 	struct mtx		sc_mtx;
+	struct sx		sc_mii_lock;
 	struct usb_xfer	*sc_xfer[AUE_N_TRANSFER];
 
 	int			sc_flags;
@@ -218,3 +219,6 @@ struct aue_softc {
 #define	AUE_LOCK(_sc)		mtx_lock(&(_sc)->sc_mtx)
 #define	AUE_UNLOCK(_sc)		mtx_unlock(&(_sc)->sc_mtx)
 #define	AUE_LOCK_ASSERT(_sc, t)	mtx_assert(&(_sc)->sc_mtx, t)
+#define	AUE_MII_LOCK(_sc)	sx_xlock(&(_sc)->sc_mii_lock)
+#define	AUE_MII_UNLOCK(_sc)	sx_xunlock(&(_sc)->sc_mii_lock)
+#define	AUE_MII_TRYLOCK(_sc)	sx_try_xlock(&(_sc)->sc_mii_lock)
