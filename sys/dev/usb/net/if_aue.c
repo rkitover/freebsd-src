@@ -997,6 +997,8 @@ aue_init(struct usb_ether *ue)
 	usbd_xfer_set_stall(sc->sc_xfer[AUE_BULK_DT_WR]);
 
 	if_setdrvflagbits(ifp, IFF_DRV_RUNNING, 0);
+	/* Switch to selected media. */
+	aue_ifmedia_upd(ifp);
 	aue_start(ue);
 }
 

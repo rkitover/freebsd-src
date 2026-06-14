@@ -100,7 +100,6 @@ DRIVER_MODULE(acphy, miibus, acphy_driver, 0, 0);
 
 static int	acphy_service(struct mii_softc *, struct mii_data *, int);
 static void	acphy_reset(struct mii_softc *);
-static void	acphy_status(struct mii_softc *);
 
 static const struct mii_phydesc acphys[] = {
 	MII_PHY_DESC(ALTIMA, AC101),
@@ -112,7 +111,7 @@ static const struct mii_phydesc acphys[] = {
 
 static const struct mii_phy_funcs acphy_funcs = {
 	acphy_service,
-	acphy_status,
+	ukphy_status,
 	acphy_reset
 };
 
@@ -185,52 +184,6 @@ acphy_service(struct mii_softc *sc, struct mii_data *mii, int cmd)
 	/* Callback if something changed. */
 	mii_phy_update(sc, cmd);
 	return (0);
-}
-
-static void
-acphy_status(struct mii_softc *sc)
-{
-	struct mii_data *mii = sc->mii_pdata;
-	struct ifmedia_entry *ife = mii->mii_media.ifm_cur;
-	int bmsr, bmcr, diag;
-
-	mii->mii_media_status = IFM_AVALID;
-	mii->mii_media_active = IFM_ETHER;
-
-	bmsr = PHY_READ(sc, MII_BMSR) |
-	    PHY_READ(sc, MII_BMSR);
-	if (bmsr & BMSR_LINK)
-		mii->mii_media_status |= IFM_ACTIVE;
-
-	bmcr = PHY_READ(sc, MII_BMCR);
-	if (bmcr & BMCR_ISO) {
-		mii->mii_media_active |= IFM_NONE;
-		mii->mii_media_status = 0;
-		return;
-	}
-
-	if (bmcr & BMCR_LOOP)
-		mii->mii_media_active |= IFM_LOOP;
-
-	if (bmcr & BMCR_AUTOEN) {
-		if ((bmsr & BMSR_ACOMP) == 0) {
-			/* Erg, still trying, I guess... */
-			mii->mii_media_active |= IFM_NONE;
-			return;
-		}
-		diag = PHY_READ(sc, MII_ACPHY_DIAG);
-		if (diag & AC_DIAG_SPEED)
-			mii->mii_media_active |= IFM_100_TX;
-		else
-			mii->mii_media_active |= IFM_10_T;
-
-		if (diag & AC_DIAG_DUPLEX)
-			mii->mii_media_active |=
-			    IFM_FDX | mii_phy_flowstatus(sc);
-		else
-			mii->mii_media_active |= IFM_HDX;
-	} else
-		mii->mii_media_active = ife->ifm_media;
 }
 
 static void
